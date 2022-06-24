@@ -31,8 +31,7 @@ pip install fasttld
 or build from source
 
 ```python
-git clone https://github.com/jophy/fasttld.git && cd fasttld
-python setup.py install
+pip install "git+https://github.com/jophy/fasttld.git#egg=fasttld"
 ```
 
 ## Usage
