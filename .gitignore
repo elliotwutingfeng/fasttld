@@ -8,3 +8,5 @@ fasttld.egg-info/
 __pycache__/
 .mypy_cache/
 .eggs/
+*.ipynb
+.ipynb_checkpoints/

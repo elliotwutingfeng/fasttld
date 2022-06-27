@@ -16,13 +16,21 @@ import idna
 
 from fasttld.psl import getPublicSuffixList, update
 
-IP_RE = re.compile(
-    r"^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}"
-    r"([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
-)
-
 # Characters valid in scheme names
-SCHEME_RE = re.compile(r"^[A-Za-z0-9+-.]+://")
+SCHEME_RE = re.compile(r"(?i)^([a-z][a-z0-9+-.]*:)?[\\/]{2,}")
+
+labelSeparators = "\u002e\u3002\uff0e\uff61"
+labelSeparatorsSet = set(labelSeparators)
+whitespace = " \t\n\v\f\r\uFEFF\u200b\u200c\u200d\u00a0\u1680\u0085\u0000"
+endOfHostWithPortDelimiters = "/\\?#"
+endOfHostWithPortDelimitersSet = set(endOfHostWithPortDelimiters)
+endOfHostDelimitersSet = set(endOfHostWithPortDelimiters + ":")
+invalidUserInfoCharsSet = set(endOfHostWithPortDelimiters + "[]")
+
+IP_RE = re.compile(
+    r"^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
+    r"[%s]){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$" % labelSeparators
+)
 
 TLDResult = namedtuple(
     "TLDResult",
@@ -39,18 +47,25 @@ TLDResult = namedtuple(
 )
 
 
+def replace_multiple(s, chars, replace_with):
+    for char in chars:
+        if char in s:
+            s = s.replace(char, replace_with)
+    return s
+
+
+def is_ipv6(maybe_ipv6):
+    try:
+        socket.inet_pton(socket.AF_INET6, replace_multiple(maybe_ipv6, labelSeparators, "."))
+        return True
+    except Exception:
+        pass
+    return False
+
+
 def looks_like_ip(maybe_ip):
     """Does the given str look like an IP address?"""
-    try:
-        socket.inet_aton(maybe_ip)
-        return True
-    except socket.error:  # for Python 2 compatibility
-        pass
-    except (AttributeError, UnicodeError, ValueError):
-        if IP_RE.match(maybe_ip):
-            return True
-
-    return False
+    return IP_RE.match(maybe_ip)
 
 
 def check_numeric(maybe_numeric):
@@ -59,6 +74,33 @@ def check_numeric(maybe_numeric):
     except ValueError:
         return False
     return True
+
+
+def index_last_char_before(s, b, not_after_chars):
+    """index_last_char_before returns the index of the last instance of char b
+    before any char in not_after_chars, otherwise -1
+    """
+    idx = -1
+    for i, c in enumerate(s):
+        if c in not_after_chars:
+            break
+        if c == b:
+            idx = i
+    return idx
+
+
+def index_any(s, charset):
+    for i, c in enumerate(s):
+        if c in charset:
+            return i
+    return -1
+
+
+def last_index_any(s, charset):
+    for i, c in enumerate(reversed(s), start=1):
+        if c in charset:
+            return len(s) - i
+    return -1
 
 
 class FastTLDExtract(object):
@@ -126,46 +168,99 @@ class FastTLDExtract(object):
         >>> FastTLDExtract.extract('127.0.0.1', subdomain=True)
         >>> TLDResult(scheme='', userinfo='', subdomain='', domain='127.0.0.1', suffix='', port='', path='', domain_name='127.0.0.1')
         """
+
+        def urlParts():
+            return TLDResult(
+                        ret_scheme,
+                        ret_userinfo,
+                        ret_subdomain,
+                        ret_domain,
+                        ret_suffix,
+                        ret_port,
+                        ret_path,
+                        ret_domain_name,
+                    )
+
         ret_scheme = ret_userinfo = ret_subdomain = ret_domain = ""
         ret_suffix = ret_port = ret_path = ret_domain_name = ""
-        if format:
-            raw_url = self.format(raw_url)
 
-        # Borrowed from tldextract library (https://github.com/john-kurkowski/tldextract)
-        # Use regex to strip raw_url of scheme subcomponent and anything after host subcomponent
-        # Reference: https://en.wikipedia.org/wiki/Uniform_Resource_Identifier#Syntax
-
-        netloc_with_scheme = raw_url.strip(". \n\t\r\uFEFF")  # \u200b\u200c\u200d
+        # Extract URL scheme
+        netloc_with_scheme = raw_url.strip(whitespace)
         netloc = SCHEME_RE.sub("", netloc_with_scheme)
-
         ret_scheme = netloc_with_scheme[:len(netloc_with_scheme)-len(netloc)]
 
-        after_host = ""
-
         # Extract URL userinfo
-        try:
-            at_idx = netloc.index("@")
-        except ValueError:
-            pass
-        else:
+        at_idx = index_last_char_before(netloc, "@", invalidUserInfoCharsSet)
+        if at_idx != -1:
             ret_userinfo = netloc[:at_idx]
             netloc = netloc[at_idx+1:]
 
-        # Separate URL host from subcomponents thereafter
-        try:
-            host_end_index = next(i for i, c in enumerate(netloc) if c in {':', '/', '?', '&', '#'})
-        except StopIteration:
-            pass
-        else:
-            after_host = netloc[host_end_index:]
-            netloc = netloc[:host_end_index]
+        # Find square brackets (if any) and host end index
+        openingSquareBracketIdx = closingSquareBracketIdx = hostEndIdx = -1
+        for i, r in enumerate(netloc):
+            if r == "[":
+                # Check for opening square bracket
+                if i > 0:
+                    # Reject if opening square bracket is not first character of netloc
+                    return urlParts()
+                openingSquareBracketIdx = i
+            if r == "]":
+                # Check for closing square bracket
+                closingSquareBracketIdx = i
 
-        # extract port and "Path" if any
+            if openingSquareBracketIdx == -1:
+                if closingSquareBracketIdx != -1:
+                    # Reject if closing square bracket present but no opening square bracket
+                    return urlParts()
+                if r in endOfHostDelimitersSet:
+                    # If no square brackets
+                    # Check for endOfHostDelimitersSet
+                    hostEndIdx = i
+
+            if openingSquareBracketIdx != -1 and closingSquareBracketIdx != -1:
+                if (closingSquareBracketIdx > openingSquareBracketIdx and
+                   r in endOfHostWithPortDelimitersSet):
+                    # If opening + closing square bracket are present in correct order
+                    # check for endOfHostWithPortDelimitersSet
+                    hostEndIdx = i
+            if hostEndIdx != -1:
+                break
+            if i == len(netloc) - 1 and closingSquareBracketIdx < openingSquareBracketIdx:
+                # Reject if end of netloc reached but incomplete square bracket pair
+                return urlParts()
+
+        if closingSquareBracketIdx == len(netloc) - 1:
+            hostEndIdx = -1
+        elif closingSquareBracketIdx != -1:
+            hostEndIdx = closingSquareBracketIdx + 1
+
+        # Check for IPv6 address
+        if closingSquareBracketIdx > openingSquareBracketIdx:
+            if not is_ipv6(netloc[1:closingSquareBracketIdx]):
+                # Have square brackets but invalid IPv6 => Domain is invalid
+                return urlParts()
+            # Closing square bracket in correct place and IPv6 is valid
+            ret_domain = netloc[1:closingSquareBracketIdx]
+            ret_domain_name = netloc[1:closingSquareBracketIdx]
+
+        after_host = ""
+        # Separate URL host from subcomponents thereafter
+        if hostEndIdx != -1:
+            after_host = netloc[hostEndIdx:]
+            netloc = netloc[0:hostEndIdx]
+
+        invalid_punycode = False
+        try:
+            puny_netloc = self.format(netloc)
+        except Exception:
+            puny_netloc = ""
+            invalid_punycode = True
+        if format:
+            netloc = puny_netloc
+
+        # Extract Port and "Path" if any
         if len(after_host):
-            try:
-                path_start_index = after_host.index("/")
-            except ValueError:
-                path_start_index = -1
+            path_start_index = index_any(after_host, endOfHostWithPortDelimitersSet)
             invalid_port = False
             if after_host[0] == ':':
                 if path_start_index == -1:
@@ -177,99 +272,91 @@ class FastTLDExtract(object):
                 else:
                     ret_port = maybe_port
             if not invalid_port and path_start_index != -1 and path_start_index != len(after_host):
-                ret_path = after_host[path_start_index+1:]
+                # If there is any path/query/fragment after the URL authority component...
+                ret_path = after_host[path_start_index:]
 
-        # Determine if raw_url is an IP address
-        if len(netloc) != 0 and looks_like_ip(netloc):
-            return TLDResult(
-                "",
-                "",
-                "",
-                netloc,
-                "",
-                "",
-                "",
-                netloc
-            )
+        if closingSquareBracketIdx > 0:
+            # Is IPv6 address
+            return urlParts()
 
-        labels = netloc.split(".")
-        labels.reverse()
+        # Check for IPv4 address
+        if looks_like_ip(netloc):
+            ret_domain = ret_domain_name = netloc
+            return urlParts()
 
-        node = self.trie  # define the root node
-        suffix = []
-        for label in labels:
-            if node is True:  # or alternatively if type(node) is not dict:
-                # This node is an end node.
-                ret_domain = label
-                break
+        # host is invalid if host cannot be converted to unicode
+        if invalid_punycode:
+            return urlParts()
 
-            # This node has sub-nodes and maybe an end-node.
-            # eg. cn -> (cn, gov.cn)
-            if "_END" in node:
-                # check if there is a sub node
-                # eg. gov.cn
-                if label in node:
-                    suffix.append(label)
-                    node = node[label]
-                    continue
+        # Define the root node
+        node = self.trie
+
+        hasSuffix = end = False
+        previousSepIdx = 0
+        sepIdx = len(netloc)
+
+        while not end:
+            label = ""
+            previousSepIdx = sepIdx
+            sepIdx = last_index_any(netloc[0:sepIdx], labelSeparatorsSet)
+            if sepIdx != -1:
+                label = netloc[sepIdx+1: previousSepIdx]
+            else:
+                label = netloc[0:previousSepIdx]
+                end = True
 
             if "*" in node:
-                # check if there is a sub node
-                # eg. www.ck
+                # check if label falls under any wildcard exception rule
+                # e.g. !www.ck
                 if ("!%s" % label) in node:
-                    ret_domain = label
-                else:
-                    suffix.append(label)
+                    sepIdx = previousSepIdx
                 break
 
-            # check a TLD in PSL
+            # check if label is part of a TLD
             if label in node:
-                suffix.append(label)
+                hasSuffix = True
                 node = node[label]
+                if node is True:
+                    # label is at a leaf node (no children) ; break out of loop
+                    break
             else:
+                if previousSepIdx != len(netloc):
+                    sepIdx = previousSepIdx
                 break
 
-        suffix.reverse()
-        len_suffix = len(suffix)
-        len_labels = len(labels)
-        ret_suffix = ".".join(suffix)
+        if sepIdx == -1:
+            sepIdx = len(netloc)
 
-        if 0 < len_suffix < len_labels:
-            ret_domain = labels[len_suffix]
-            if subdomain:
-                if len_suffix + 1 < len_labels:
-                    ret_subdomain = netloc[: -(len(ret_domain) + len(ret_suffix) + 2)]
-        if ret_domain and ret_suffix:
-            ret_domain_name = "%s.%s" % (ret_domain, ret_suffix)
+        if hasSuffix:
+            if sepIdx < len(netloc):  # If there is a Domain
+                ret_suffix = netloc[sepIdx+1:]
+                domainStartSepIdx = last_index_any(netloc[0:sepIdx], labelSeparatorsSet)
+                if domainStartSepIdx != -1:  # If there is a SubDomain
+                    domainStartIdx = domainStartSepIdx + 1
+                    ret_domain = netloc[domainStartIdx:sepIdx]
+                    ret_domain_name = netloc[domainStartIdx:]
+                    if subdomain:  # If SubDomain is to be included
+                        ret_subdomain = netloc[0:domainStartSepIdx]
+                else:
+                    ret_domain = netloc[domainStartSepIdx+1: sepIdx]
+                    ret_domain_name = netloc[domainStartSepIdx+1:]
+            else:
+                # If only Suffix exists
+                ret_suffix = netloc
 
-        return TLDResult(
-            ret_scheme,
-            ret_userinfo,
-            ret_subdomain,
-            ret_domain,
-            ret_suffix,
-            ret_port,
-            ret_path,
-            ret_domain_name,
-        )
+        elif sepIdx < len(netloc):  # If there is a SubDomain
+            domainStartSepIdx = last_index_any(netloc, labelSeparatorsSet)
+            domainStartIdx = domainStartSepIdx + 1
+            ret_domain = netloc[domainStartIdx:]
+            if subdomain:  # If SubDomain is to be included
+                ret_subdomain = netloc[0:domainStartSepIdx]
+        else:  # If there is no SubDomain
+            ret_domain = netloc
+
+        return urlParts()
 
     def format(self, raw_url):
         """
-        Now we provide simple rules to format strings.
-        eg. lower case, punycode transform
-        Todo:
-        1.URL Parser to extract domain.
-        2.idna domain parser
-        :param raw_url:
-        :return: input
+        Convert to punycode
         """
-        # idna_url = idna.encode(raw_url.strip().lower()).decode()
-        # input_ = urlparse.urlparse(idna_url).netloc
-        # if '//' in input_:
-        #     _, _, input_ = input_.rpartition('//')
-        # if '/' in input_:
-        #     input_, _, _ = input_.lpartition('//')
-        # return input_
-        # Punycode costs too much time! Make sure you really need it.
-
-        return idna.encode(raw_url.strip().lower()).decode()
+        return idna.encode(raw_url).decode()
