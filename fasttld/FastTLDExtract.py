@@ -186,8 +186,10 @@ class FastTLDExtract(object):
 
         # Extract URL scheme
         netloc_with_scheme = raw_url.strip(whitespace)
-        netloc = SCHEME_RE.sub("", netloc_with_scheme)
-        ret_scheme = netloc_with_scheme[:len(netloc_with_scheme)-len(netloc)]
+        schemeMatch = SCHEME_RE.match(netloc_with_scheme)
+        schemeEndIdx = schemeMatch.span()[1] if schemeMatch is not None else 0
+        netloc = netloc_with_scheme[schemeEndIdx:]
+        ret_scheme = netloc_with_scheme[:schemeEndIdx]
 
         # Extract URL userinfo
         at_idx = index_last_char_before(netloc, "@", invalidUserInfoCharsSet)
@@ -240,8 +242,7 @@ class FastTLDExtract(object):
                 # Have square brackets but invalid IPv6 => Domain is invalid
                 return urlParts()
             # Closing square bracket in correct place and IPv6 is valid
-            ret_domain = netloc[1:closingSquareBracketIdx]
-            ret_domain_name = netloc[1:closingSquareBracketIdx]
+            ret_domain = ret_domain_name = netloc[1:closingSquareBracketIdx]
 
         after_host = ""
         # Separate URL host from subcomponents thereafter
@@ -251,12 +252,12 @@ class FastTLDExtract(object):
 
         invalid_punycode = False
         try:
-            puny_netloc = self.format(netloc)
+            puny_encoded = idna.encode(netloc)
+            if format:
+                netloc = puny_encoded.decode()
         except Exception:
-            puny_netloc = ""
+            netloc = ""
             invalid_punycode = True
-        if format:
-            netloc = puny_netloc
 
         # Extract Port and "Path" if any
         if len(after_host):
@@ -275,6 +276,10 @@ class FastTLDExtract(object):
                 # If there is any path/query/fragment after the URL authority component...
                 ret_path = after_host[path_start_index:]
 
+        # host is invalid if host cannot be converted to unicode
+        if invalid_punycode:
+            return urlParts()
+
         if closingSquareBracketIdx > 0:
             # Is IPv6 address
             return urlParts()
@@ -284,79 +289,58 @@ class FastTLDExtract(object):
             ret_domain = ret_domain_name = netloc
             return urlParts()
 
-        # host is invalid if host cannot be converted to unicode
-        if invalid_punycode:
-            return urlParts()
+        labels = re.split("(\\%s)" % "|".join(labelSeparators), netloc)
 
-        # Define the root node
-        node = self.trie
+        node = self.trie  # define the root node
+        suffix = []
+        for label in reversed(labels):
+            if label in labelSeparatorsSet:
+                suffix.append(label)
+                continue
+            if node is True:  # or alternatively if type(node) is not dict:
+                # This node is an end node.
+                ret_domain = label
+                break
 
-        hasSuffix = end = False
-        previousSepIdx = 0
-        sepIdx = len(netloc)
-
-        while not end:
-            label = ""
-            previousSepIdx = sepIdx
-            sepIdx = last_index_any(netloc[0:sepIdx], labelSeparatorsSet)
-            if sepIdx != -1:
-                label = netloc[sepIdx+1: previousSepIdx]
-            else:
-                label = netloc[0:previousSepIdx]
-                end = True
+            # This node has sub-nodes and maybe an end-node.
+            # eg. cn -> (cn, gov.cn)
+            if "_END" in node:
+                # check if there is a sub node
+                # eg. gov.cn
+                if label in node:
+                    suffix.append(label)
+                    node = node[label]
+                    continue
 
             if "*" in node:
-                # check if label falls under any wildcard exception rule
-                # e.g. !www.ck
+                # check if there is a sub node
+                # eg. www.ck
                 if ("!%s" % label) in node:
-                    sepIdx = previousSepIdx
-                break
-
-            # check if label is part of a TLD
-            if label in node:
-                hasSuffix = True
-                node = node[label]
-                if node is True:
-                    # label is at a leaf node (no children) ; break out of loop
-                    break
-            else:
-                if previousSepIdx != len(netloc):
-                    sepIdx = previousSepIdx
-                break
-
-        if sepIdx == -1:
-            sepIdx = len(netloc)
-
-        if hasSuffix:
-            if sepIdx < len(netloc):  # If there is a Domain
-                ret_suffix = netloc[sepIdx+1:]
-                domainStartSepIdx = last_index_any(netloc[0:sepIdx], labelSeparatorsSet)
-                if domainStartSepIdx != -1:  # If there is a SubDomain
-                    domainStartIdx = domainStartSepIdx + 1
-                    ret_domain = netloc[domainStartIdx:sepIdx]
-                    ret_domain_name = netloc[domainStartIdx:]
-                    if subdomain:  # If SubDomain is to be included
-                        ret_subdomain = netloc[0:domainStartSepIdx]
+                    ret_domain = label
                 else:
-                    ret_domain = netloc[domainStartSepIdx+1: sepIdx]
-                    ret_domain_name = netloc[domainStartSepIdx+1:]
-            else:
-                # If only Suffix exists
-                ret_suffix = netloc
+                    suffix.append(label)
+                break
 
-        elif sepIdx < len(netloc):  # If there is a SubDomain
-            domainStartSepIdx = last_index_any(netloc, labelSeparatorsSet)
-            domainStartIdx = domainStartSepIdx + 1
-            ret_domain = netloc[domainStartIdx:]
-            if subdomain:  # If SubDomain is to be included
-                ret_subdomain = netloc[0:domainStartSepIdx]
-        else:  # If there is no SubDomain
-            ret_domain = netloc
+            # check a TLD in PSL
+            if label in node:
+                suffix.append(label)
+                node = node[label]
+            else:
+                break
+
+        if len(suffix) and suffix[-1] in labelSeparatorsSet:
+            suffix = suffix[:-1]
+        suffix.reverse()
+        len_suffix = len(suffix)
+        len_labels = len(labels)
+        ret_suffix = "".join(suffix)
+
+        if len_suffix < len_labels:
+            domain_idx = len_labels-len_suffix-2 if len_suffix else len_labels - 1
+            ret_domain = labels[domain_idx]
+            if subdomain and domain_idx:
+                ret_subdomain = "".join(labels[:domain_idx-1])
+        if ret_domain and ret_suffix:
+            ret_domain_name = "".join(labels[len_labels-len_suffix-2:])
 
         return urlParts()
-
-    def format(self, raw_url):
-        """
-        Convert to punycode
-        """
-        return idna.encode(raw_url).decode()
