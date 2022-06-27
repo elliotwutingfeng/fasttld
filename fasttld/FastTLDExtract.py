@@ -32,6 +32,8 @@ IP_RE = re.compile(
     r"[%s]){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$" % labelSeparators
 )
 
+SPLIT_RE = re.compile("(\\%s)" % "|".join(labelSeparators))
+
 TLDResult = namedtuple(
     "TLDResult",
     [
@@ -289,13 +291,14 @@ class FastTLDExtract(object):
             ret_domain = ret_domain_name = netloc
             return urlParts()
 
-        labels = re.split("(\\%s)" % "|".join(labelSeparators), netloc)
+        labels = SPLIT_RE.split(netloc)
 
         node = self.trie  # define the root node
-        suffix = []
+        len_suffix = 0
+        len_labels = len(labels)
         for label in reversed(labels):
             if label in labelSeparatorsSet:
-                suffix.append(label)
+                len_suffix += 1
                 continue
             if node is True:  # or alternatively if type(node) is not dict:
                 # This node is an end node.
@@ -308,7 +311,7 @@ class FastTLDExtract(object):
                 # check if there is a sub node
                 # eg. gov.cn
                 if label in node:
-                    suffix.append(label)
+                    len_suffix += 1
                     node = node[label]
                     continue
 
@@ -318,22 +321,19 @@ class FastTLDExtract(object):
                 if ("!%s" % label) in node:
                     ret_domain = label
                 else:
-                    suffix.append(label)
+                    len_suffix += 1
                 break
 
             # check a TLD in PSL
             if label in node:
-                suffix.append(label)
+                len_suffix += 1
                 node = node[label]
             else:
                 break
 
-        if len(suffix) and suffix[-1] in labelSeparatorsSet:
-            suffix = suffix[:-1]
-        suffix.reverse()
-        len_suffix = len(suffix)
-        len_labels = len(labels)
-        ret_suffix = "".join(suffix)
+        if len_suffix and labels[-len_suffix] in labelSeparatorsSet:
+            len_suffix -= 1
+        ret_suffix = "".join(labels[-len_suffix:]) if len_suffix else ""
 
         if len_suffix < len_labels:
             domain_idx = len_labels-len_suffix-2 if len_suffix else len_labels - 1
