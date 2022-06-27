@@ -2533,20 +2533,20 @@ lookoutTests = [  # some tests from lookout.net
 
 
 def testHandler(extractor, test):
-    return extractor.extract(test.get("urlParams", {}).get("URL", ""),
-                             subdomain=not test.get(
-                                "urlParams", {}).get("IgnoreSubDomains", False),
-                             format=test.get("urlParams", {}).get("ConvertURLToPunyCode", False)
-                                ), (
-                            test.get("expected", {}).get("Scheme", ""),
-                            test.get("expected", {}).get("UserInfo", ""),
-                            test.get("expected", {}).get("SubDomain", ""),
-                            test.get("expected", {}).get("Domain", ""),
-                            test.get("expected", {}).get("Suffix", ""),
-                            test.get("expected", {}).get("Port", ""),
-                            test.get("expected", {}).get("Path", ""),
-                            test.get("expected", {}).get("RegisteredDomain", "")
-            )
+    return extractor.extract(
+        test.get("urlParams", {}).get("URL", ""),
+        subdomain=not test.get("urlParams", {}).get("IgnoreSubDomains", False),
+        format=test.get("urlParams", {}).get("ConvertURLToPunyCode", False),
+    ), (
+        test.get("expected", {}).get("Scheme", ""),
+        test.get("expected", {}).get("UserInfo", ""),
+        test.get("expected", {}).get("SubDomain", ""),
+        test.get("expected", {}).get("Domain", ""),
+        test.get("expected", {}).get("Suffix", ""),
+        test.get("expected", {}).get("Port", ""),
+        test.get("expected", {}).get("Path", ""),
+        test.get("expected", {}).get("RegisteredDomain", ""),
+    )
 
 
 class FastTLDExtractCase(unittest.TestCase):
@@ -2701,9 +2701,12 @@ class FastTLDExtractCase(unittest.TestCase):
             self.assertEqual(all_suffix.extract(t), a)
 
     def test_not_tld(self):
-        self.assertEqual(all_suffix.extract("www.abc.noexists"), ("", "", "www.abc", "noexists", "", "", "", ""))
         self.assertEqual(
-            no_private_suffix.extract("www.abc.noexists"), ("", "", "www.abc", "noexists", "", "", "", "")
+            all_suffix.extract("www.abc.noexists"), ("", "", "www.abc", "noexists", "", "", "", "")
+        )
+        self.assertEqual(
+            no_private_suffix.extract("www.abc.noexists"),
+            ("", "", "www.abc", "noexists", "", "", "", ""),
         )
 
     def test_only_dot_tld(self):
