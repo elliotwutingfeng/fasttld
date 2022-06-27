@@ -253,13 +253,12 @@ class FastTLDExtract(object):
             netloc = netloc[0:hostEndIdx]
 
         invalid_punycode = False
-        try:
-            puny_encoded = idna.encode(netloc)
-            if format:
-                netloc = puny_encoded.decode()
-        except Exception:
-            netloc = ""
-            invalid_punycode = True
+        if format:
+            try:
+                netloc = idna.encode(netloc).decode()
+            except Exception:
+                netloc = ""
+                invalid_punycode = True
 
         # Extract Port and "Path" if any
         if len(after_host):
@@ -297,7 +296,12 @@ class FastTLDExtract(object):
         len_suffix = 0
         len_labels = len(labels)
         for label in reversed(labels):
-            if label in labelSeparatorsSet:
+            if label not in labelSeparatorsSet:
+                try:
+                    idna.decode(label)
+                except Exception:
+                    return urlParts()
+            else:
                 len_suffix += 1
                 continue
             if node is True:  # or alternatively if type(node) is not dict:
