@@ -8,31 +8,33 @@
 Copyright (c) 2022 Wu Tingfeng
 Copyright (c) 2017-2018 Jophy
 """
-import re
-import socket
 from collections import namedtuple
+from re import compile
+from socket import AF_INET6, inet_pton
 
-import idna
+from idna import decode
 
 from fasttld.psl import getPublicSuffixList, update
-
-# Characters valid in scheme names
-SCHEME_RE = re.compile(r"(?i)^([a-z][a-z0-9+-.]*:)?[\\/]{2,}")
 
 labelSeparators = "\u002e\u3002\uff0e\uff61"
 labelSeparatorsSet = set(labelSeparators)
 whitespace = " \t\n\v\f\r\uFEFF\u200b\u200c\u200d\u00a0\u1680\u0085\u0000"
 endOfHostWithPortDelimiters = "/\\?#"
-endOfHostWithPortDelimitersSet = set(endOfHostWithPortDelimiters)
-endOfHostDelimitersSet = set(endOfHostWithPortDelimiters + ":")
-invalidUserInfoCharsSet = set(endOfHostWithPortDelimiters + "[]")
+endOfHostWithPortDelimitersSet = set(ord(i) for i in endOfHostWithPortDelimiters)
+endOfHostDelimitersSet = set(ord(i) for i in (endOfHostWithPortDelimiters + ":"))
+invalidUserInfoCharsSet = set(ord(i) for i in (endOfHostWithPortDelimiters + "[]"))
 
-IP_RE = re.compile(
+alphabets = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+numbers = "0123456789"
+schemeFirstCharSet = set(ord(i) for i in alphabets)
+schemeRemainingCharSet = set(ord(i) for i in (alphabets+numbers+"+-."))
+
+IP_RE = compile(
     r"^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
     r"[%s]){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$" % labelSeparators
 )
 
-SPLIT_RE = re.compile("(\\%s)" % "|".join(labelSeparators))
+SPLIT_RE = compile("(\\%s)" % "|".join(labelSeparators))
 
 TLDResult = namedtuple(
     "TLDResult",
@@ -58,7 +60,7 @@ def replace_multiple(s, chars, replace_with):
 
 def is_ipv6(maybe_ipv6):
     try:
-        socket.inet_pton(socket.AF_INET6, replace_multiple(maybe_ipv6, labelSeparators, "."))
+        inet_pton(AF_INET6, replace_multiple(maybe_ipv6, labelSeparators, "."))
         return True
     except Exception:
         pass
@@ -67,7 +69,7 @@ def is_ipv6(maybe_ipv6):
 
 def looks_like_ip(maybe_ip):
     """Does the given str look like an IP address?"""
-    return IP_RE.match(maybe_ip)
+    return IP_RE.match(str(maybe_ip, 'utf-8'))
 
 
 def check_numeric(maybe_numeric):
@@ -98,11 +100,44 @@ def index_any(s, charset):
     return -1
 
 
-def last_index_any(s, charset):
-    for i, c in enumerate(reversed(s), start=1):
-        if c in charset:
-            return len(s) - i
-    return -1
+def getSchemeEndIndex(s):
+    colon = False
+    slashCount = 0
+
+    for i, val in enumerate(s):
+        # first character
+        if i == 0:
+            # expecting schemeFirstCharSet or slash
+            if val in schemeFirstCharSet:
+                continue
+            if val == 47 or val == 92:  # / or \
+                slashCount += 1
+                continue
+            return 0
+        # second character onwards
+        # if no slashes yet, look for schemeRemainingCharSet or colon
+        # otherwise look for slashes
+        if slashCount == 0:
+            if not colon:
+                if val in schemeRemainingCharSet:
+                    continue
+                if val == 58:  # ':' is 58
+                    colon = True
+                    continue
+            if val == 47 or val == 92:  # / or \
+                slashCount += 1
+                continue
+            return 0
+        # expecting only slashes
+        if val == 47 or val == 92:  # / or \
+            slashCount += 1
+            continue
+        if slashCount < 2:
+            return 0
+        return i
+    if slashCount >= 2:
+        return len(s)
+    return 0
 
 
 class FastTLDExtract(object):
@@ -187,28 +222,27 @@ class FastTLDExtract(object):
         ret_suffix = ret_port = ret_path = ret_domain_name = ""
 
         # Extract URL scheme
-        netloc_with_scheme = raw_url.strip(whitespace)
-        schemeMatch = SCHEME_RE.match(netloc_with_scheme)
-        schemeEndIdx = schemeMatch.span()[1] if schemeMatch is not None else 0
+        netloc_with_scheme = memoryview(bytes(raw_url.strip(whitespace), 'utf-8'))
+        schemeEndIdx = getSchemeEndIndex(netloc_with_scheme)
         netloc = netloc_with_scheme[schemeEndIdx:]
-        ret_scheme = netloc_with_scheme[:schemeEndIdx]
+        ret_scheme = str(netloc_with_scheme[:schemeEndIdx], 'utf-8')
 
         # Extract URL userinfo
-        at_idx = index_last_char_before(netloc, "@", invalidUserInfoCharsSet)
+        at_idx = index_last_char_before(netloc, 64, invalidUserInfoCharsSet) # '@' is 64
         if at_idx != -1:
-            ret_userinfo = netloc[:at_idx]
+            ret_userinfo = str(netloc[:at_idx], 'utf-8')
             netloc = netloc[at_idx+1:]
 
         # Find square brackets (if any) and host end index
         openingSquareBracketIdx = closingSquareBracketIdx = hostEndIdx = -1
         for i, r in enumerate(netloc):
-            if r == "[":
+            if r == 91:  # '['
                 # Check for opening square bracket
                 if i > 0:
                     # Reject if opening square bracket is not first character of netloc
                     return urlParts()
                 openingSquareBracketIdx = i
-            if r == "]":
+            if r == 93:  # ']'
                 # Check for closing square bracket
                 closingSquareBracketIdx = i
 
@@ -240,13 +274,13 @@ class FastTLDExtract(object):
 
         # Check for IPv6 address
         if closingSquareBracketIdx > openingSquareBracketIdx:
-            if not is_ipv6(netloc[1:closingSquareBracketIdx]):
+            if not is_ipv6(str(netloc[1:closingSquareBracketIdx], 'utf-8')):
                 # Have square brackets but invalid IPv6 => Domain is invalid
                 return urlParts()
             # Closing square bracket in correct place and IPv6 is valid
-            ret_domain = ret_domain_name = netloc[1:closingSquareBracketIdx]
+            ret_domain = ret_domain_name = str(netloc[1:closingSquareBracketIdx], 'utf-8')
 
-        after_host = ""
+        after_host = memoryview(b'')
         # Separate URL host from subcomponents thereafter
         if hostEndIdx != -1:
             after_host = netloc[hostEndIdx:]
@@ -255,27 +289,27 @@ class FastTLDExtract(object):
         invalid_punycode = False
         if format:
             try:
-                netloc = idna.encode(netloc).decode()
+                netloc = memoryview(str(netloc, 'utf-8').encode('idna'))
             except Exception:
-                netloc = ""
+                netloc = memoryview(b'')
                 invalid_punycode = True
 
         # Extract Port and "Path" if any
         if len(after_host):
             path_start_index = index_any(after_host, endOfHostWithPortDelimitersSet)
             invalid_port = False
-            if after_host[0] == ':':
+            if after_host[0] == 58:  # ord(':') == 58
                 if path_start_index == -1:
-                    maybe_port = after_host[1:]
+                    maybe_port = str(after_host[1:], 'utf-8')
                 else:
-                    maybe_port = after_host[1:path_start_index]
+                    maybe_port = str(after_host[1:path_start_index], 'utf-8')
                 if not(check_numeric(maybe_port) and 0 <= int(maybe_port) <= 65535):
                     invalid_port = True
                 else:
                     ret_port = maybe_port
             if not invalid_port and path_start_index != -1 and path_start_index != len(after_host):
                 # If there is any path/query/fragment after the URL authority component...
-                ret_path = after_host[path_start_index:]
+                ret_path = str(after_host[path_start_index:], 'utf-8')
 
         # host is invalid if host cannot be converted to unicode
         if invalid_punycode:
@@ -287,20 +321,21 @@ class FastTLDExtract(object):
 
         # Check for IPv4 address
         if looks_like_ip(netloc):
-            ret_domain = ret_domain_name = netloc
+            ret_domain = ret_domain_name = str(netloc, 'utf-8')
             return urlParts()
 
-        labels = SPLIT_RE.split(netloc)
+        labels = SPLIT_RE.split(str(netloc, 'utf-8'))
 
         node = self.trie  # define the root node
         len_suffix = 0
         len_labels = len(labels)
         for label in reversed(labels):
             if label not in labelSeparatorsSet:
-                try:
-                    idna.decode(label)
-                except Exception:
-                    return urlParts()
+                pass
+                # try:
+                #     decode(label)
+                # except Exception:
+                #     return urlParts()
             else:
                 len_suffix += 1
                 continue

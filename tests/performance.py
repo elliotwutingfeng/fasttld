@@ -28,7 +28,7 @@ cases = [
 if sys.version_info.major == 2:
     range = xrange  # type: ignore
 
-num_iterations = 1000000
+num_iterations = 100000
 
 t = FastTLDExtract(exclude_private_suffix=True)
 
