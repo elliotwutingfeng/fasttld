@@ -13,7 +13,7 @@ implemented with the builtin python `dict()`.
 
 The goal of **fasttld** is to extract [top level domains (TLDs)](https://en.wikipedia.org/wiki/Top-level_domain) from [URLs](https://en.wikipedia.org/wiki/URL) efficiently. In the other words, we extract `com` from URLs like `www.google.com` or `https://maps.google.com:8080/a/long/path/?query=42`.
 
-Running something like **".".join(domain.split('.')[1::])** is not a viable solution, for example, `maps.baidu.com.cn`
+Running something like `".".join(domain.split('.')[1::])` is not a viable solution, for example, `maps.baidu.com.cn`
 would give us the wrong result `baidu.com.cn` instead of `com.cn`.
 
 The **fasttld** module solves this problem by using the regularly-updated [Mozilla Public Suffix List](http://www.publicsuffix.org) and the [trie](https://en.wikipedia.org/wiki/Trie) data structure to efficiently extract subdomains, hostnames, and TLDs from URLs.
@@ -65,7 +65,6 @@ or
 ```
 
 This option can be disabled setting the environment flag `FASTTLD_NO_AUTO_UPDATE` to `1`.
-
 
 ## Specify Mozilla Public Suffix List file
 
