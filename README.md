@@ -1,7 +1,6 @@
 # fasttld
 
 [![PyPI version](https://badge.fury.io/py/fasttld.svg)](https://badge.fury.io/py/fasttld)
-[![Build Status](https://api.travis-ci.org/jophy/fasttld.svg?branch=master)](https://travis-ci.org/jophy/fasttld)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
 **fasttld** is a high performance [top level domains (TLD)](https://en.wikipedia.org/wiki/Top-level_domain) extraction module based on the compressed [trie](https://en.wikipedia.org/wiki/Trie) data structure
