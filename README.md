@@ -37,11 +37,11 @@ pip install "git+https://github.com/jophy/fasttld.git#egg=fasttld"
 ## Usage
 
 ```python
->>> from fasttld import FastTLDExtract
->>> t = FastTLDExtract()
->>> res = t.extract("https://some-user@a.long.subdomain.ox.ac.uk:5000/a/b/c/d/e/f/g/h/i?id=42")
->>> scheme, userinfo, subdomain, domain, suffix, port, path, domain_name = res
->>> scheme, userinfo, subdomain, domain, suffix, port, path, domain_name
+from fasttld import FastTLDExtract
+t = FastTLDExtract()
+res = t.extract("https://some-user@a.long.subdomain.ox.ac.uk:5000/a/b/c/d/e/f/g/h/i?id=42")
+scheme, userinfo, subdomain, domain, suffix, port, path, domain_name = res
+scheme, userinfo, subdomain, domain, suffix, port, path, domain_name
 ('https://', 'some-user', 'a.long.subdomain', 'ox', 'ac.uk', '5000', '/a/b/c/d/e/f/g/h/i?id=42', 'ox.ac.uk')
 ```
 
@@ -53,15 +53,15 @@ Whenever **fasttld** is called, it will automatically update the local copy of t
 You can also run the update process manually via the following commands.
 
 ```python
->>> import fasttld
->>> fasttld.update()
+import fasttld
+fasttld.update()
 ```
 
 or
 
 ```python
->>> from fasttld import FastTLDExtract
->>> FastTLDExtract().update()
+from fasttld import FastTLDExtract
+FastTLDExtract().update()
 ```
 
 This option can be disabled setting the environment flag `FASTTLD_NO_AUTO_UPDATE` to `1`.
@@ -71,8 +71,8 @@ This option can be disabled setting the environment flag `FASTTLD_NO_AUTO_UPDATE
 You can also specify your own public suffix list file.
 
 ```python
->>> from fasttld import FastTLDExtract
->>> FastTLDExtract(file_path='/path/to/psl/file').extract('domain', subdomain=False)
+from fasttld import FastTLDExtract
+FastTLDExtract(file_path='/path/to/psl/file').extract('domain', subdomain=False)
 ```
 
 ## Disable subdomain output
@@ -80,8 +80,8 @@ You can also specify your own public suffix list file.
 If you do not need to extract subdomains, you can disable subdomain output with `subdomain=False`.
 
 ```python
->>> from fasttld import FastTLDExtract
->>> FastTLDExtract().extract('domain', subdomain=False) # set subdomain=False
+from fasttld import FastTLDExtract
+FastTLDExtract().extract('domain', subdomain=False) # set subdomain=False
 ```
 
 ## Optional: Exclude private domains
@@ -91,19 +91,19 @@ According to the [Mozilla.org wiki](https://wiki.mozilla.org/Public_Suffix_List/
 By default, **fasttld** treats private domains as TLDs (i.e. `exclude_private_suffix=False`)
 
 ```python
->>> from fasttld import FastTLDExtract
->>> FastTLDExtract(exclude_private_suffix=False).extract('news.blogspot.co.uk')
->>> ('', '', '', 'news', 'blogspot.co.uk', '', '', 'news.blogspot.co.uk') # blogspot.co.uk is treated as a TLD
->>> FastTLDExtract().extract('news.blogspot.co.uk')  # this is the default behaviour
->>> ('', '', '', 'news', 'blogspot.co.uk', '', '', 'news.blogspot.co.uk') # same output as above
+from fasttld import FastTLDExtract
+FastTLDExtract(exclude_private_suffix=False).extract('news.blogspot.co.uk')
+('', '', '', 'news', 'blogspot.co.uk', '', '', 'news.blogspot.co.uk') # blogspot.co.uk is treated as a TLD
+FastTLDExtract().extract('news.blogspot.co.uk')  # this is the default behaviour
+('', '', '', 'news', 'blogspot.co.uk', '', '', 'news.blogspot.co.uk') # same output as above
 ```
 
 You can instruct **fasttld** to exclude private domains by setting `exclude_private_suffix=True`
 
 ```python
->>> from fasttld import FastTLDExtract
->>> FastTLDExtract(exclude_private_suffix=True).extract('news.blogspot.co.uk') # set exclude_private_suffix=True
->>> ('', '', 'news', 'blogspot', 'co.uk', '', '', 'blogspot.co.uk') # notice that co.uk is now recognised as the TLD instead of blogspot.co.uk
+from fasttld import FastTLDExtract
+FastTLDExtract(exclude_private_suffix=True).extract('news.blogspot.co.uk') # set exclude_private_suffix=True
+('', '', 'news', 'blogspot', 'co.uk', '', '', 'blogspot.co.uk') # notice that co.uk is now recognised as the TLD instead of blogspot.co.uk
 ```
 
 ## Speed Comparison
