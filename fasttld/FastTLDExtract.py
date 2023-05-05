@@ -12,9 +12,9 @@ from collections import namedtuple
 from re import compile
 from socket import AF_INET6, inet_pton
 
-from idna import decode
-
 from fasttld.psl import getPublicSuffixList, update
+
+# from idna import decode
 
 labelSeparators = "\u002e\u3002\uff0e\uff61"
 labelSeparatorsSet = set(labelSeparators)
@@ -106,7 +106,7 @@ def getSchemeEndIndex(s):
 
     for i, val in enumerate(s):
         # first character
-        if i == 0:
+        if not i:
             # expecting schemeFirstCharSet or slash
             if val in schemeFirstCharSet:
                 continue
@@ -117,7 +117,7 @@ def getSchemeEndIndex(s):
         # second character onwards
         # if no slashes yet, look for schemeRemainingCharSet or colon
         # otherwise look for slashes
-        if slashCount == 0:
+        if not slashCount:
             if not colon:
                 if val in schemeRemainingCharSet:
                     continue
@@ -228,7 +228,7 @@ class FastTLDExtract(object):
         ret_scheme = str(netloc_with_scheme[:schemeEndIdx], 'utf-8')
 
         # Extract URL userinfo
-        at_idx = index_last_char_before(netloc, 64, invalidUserInfoCharsSet) # '@' is 64
+        at_idx = index_last_char_before(netloc, 64, invalidUserInfoCharsSet)  # '@' is 64
         if at_idx != -1:
             ret_userinfo = str(netloc[:at_idx], 'utf-8')
             netloc = netloc[at_idx+1:]
@@ -303,7 +303,7 @@ class FastTLDExtract(object):
                     maybe_port = str(after_host[1:], 'utf-8')
                 else:
                     maybe_port = str(after_host[1:path_start_index], 'utf-8')
-                if not(check_numeric(maybe_port) and 0 <= int(maybe_port) <= 65535):
+                if not (check_numeric(maybe_port) and 0 <= int(maybe_port) <= 65535):
                     invalid_port = True
                 else:
                     ret_port = maybe_port
